@@ -100,13 +100,23 @@ if [[ "$service" == "$undefined" ]]; then
       # sub dialog for defining Container ID to use
       # -------------------------------------------------
       msg_ct_id="Container Id to use? (next available id: $ct_id)"
-      ct_id=$(whiptail --title "Proxmox Container ID" --inputbox "$msg_ct_id" 0 0 "$ct_id"  3>&1 1>&2 2>&3)
-      exitstatus=$?
-      # back to main menu on dialog cancel
+      while true 
+      do
+        ct_id=$(whiptail --title "Proxmox Container ID" --inputbox "$msg_ct_id" 0 0 "$ct_id"  3>&1 1>&2 2>&3)
+        exitstatus=$?
+        # back to main menu on dialog cancel
+        if [ -f "/etc/pve/qemu-server/$ct_id.conf" ]; then
+          ct_ids_in_use=$(pvesh get /cluster/resources -type vm --output-format yaml \
+                          | grep -E -i 'vmid|name' | sed 's@.*:@@' | paste - - -d "")
+          whiptail --title "Error" --msgbox "ID is already use: \n\n$ct_ids_in_use" 0 0
+        else
+          break
+        fi
+      done
       if [ $exitstatus = 1 ]; then
         continue
       fi
-
+    
       # -------------------------------------------------
       # Menu dialog to choose service to install
       # -------------------------------------------------
@@ -168,25 +178,6 @@ if [[ "$service" == "$undefined" ]]; then
   fi
   done
   
-  #select svc in $available_svcs quit; do
-    # if [[ "$svc" != "quit" ]]; then
-    #    for line in $(echo $available_svcs); do
-    #     if [[ "$svc" == "$line" ]]; then
-    #       service=$svc
-    #       echo "Installation of $service selected."
-    #       valid=1
-    #       break
-    #     fi
-    #   done
-   # else
-   #   echo "Selected 'quit' exiting without action..."
-   #   exit 0
-   # fi
-   # if [[ "$valid" == "1" ]]; then
-   #   break
-   # fi
-  #done
-else
   for line in "${available_svcs[@]}" 
   do
     if [[ "$service" == "$line" ]]; then
@@ -195,7 +186,6 @@ else
       break
     fi
   done
-fi
 
 if [[ "$valid" != "1" ]]; then
   echo "Invalid option, exiting..."
