@@ -6,10 +6,13 @@
 # existing LXC containers in your environment. If the assigned ID is already taken by a VM
 # or no containers exist yet, the script falls back to the ID 100.
 
-# Authors:
+# Original bashclub authors:
 # (C) 2021 Idea an concept by Christian Zengel <christian@sysops.de>
 # (C) 2021 Script design and prototype by Markus Helmke <m.helmke@nettwarker.de>
 # (C) 2021 Script rework and documentation by Thorsten Spille <thorsten@spille-edv.de>
+
+# Forked and modified by:
+# Thomas Rathert <098urm69v@mozmail.com>
 
 # IMPORTANT NOTE:
 # Please adjust th settings in 'zamba.conf' to your needs before running the script
@@ -25,23 +28,25 @@ usage() {
     -s SERVICE   provide the service name and skip the selection dialog
     -c CFGFILE   use a different config file than 'zamba.conf'
     -h           displays this help text
-  ---------------------------------------------------------------------------
-    (C) 2021     zamba-lxc-toolbox by bashclub (https://github.com/bashclub)
-  ---------------------------------------------------------------------------
+  -----------------------------------------------------------------------------------------
+    (C) 2021     forked from bashclub zamba-lxc-toolbox by ThRat (https://github.com/ThRat)
+  -----------------------------------------------------------------------------------------
 
 	EOF
 	exit $1
 }
 
-ctid=0
-service=ask
-config=$PWD/conf/zamba.conf
+ct_id=0
+undefined="<undefined>"
+service=$undefined
+config=$undefined
+default_config=$PWD/conf/zamba.conf
 verbose=0
 
 while getopts "hi:s:c:" opt; do
   case $opt in
     h) usage 0 ;;
-    i) ctid=$OPTARG ;;
+    i) ct_id=$OPTARG ;;
     s) service=$OPTARG ;;
     c) config=$OPTARG ;;
     *) usage 1 ;;
@@ -49,30 +54,141 @@ while getopts "hi:s:c:" opt; do
 done
 shift $((OPTIND-1))
 
-OPTS=$(ls -d $PWD/src/*/ | grep -v __ | xargs basename -a)
+# list folders for available services list
+available_svcs=($(ls -d $PWD/src/*/ | grep -v __ | xargs basename -a))
 
+# use given container id (via command line opts) or if already existing the next free id
+if  [ "$ct_id" -lt 100 ] || [ -f "/etc/pve/qemu-server/$ct_id.conf" ]; then
+  ct_id=$(pvesh get /cluster/nextid | xargs );
+fi
+
+# interactive main menu
 valid=0
-if [[ "$service" == "ask" ]]; then
-  select svc in $OPTS quit; do
-    if [[ "$svc" != "quit" ]]; then
-       for line in $(echo $OPTS); do
-        if [[ "$svc" == "$line" ]]; then
-          service=$svc
-          echo "Installation of $service selected."
-          valid=1
-          break
+if [[ "$service" == "$undefined" ]]; then
+  while true
+  do
+  main_menu_choice=$(
+  whiptail --title "Operative Systems" --menu "Make your choice" 16 100 9 \
+    "1)" "Configure service container to install"  \
+    "2)" "Show configured values" \
+    "3)" "Install container" \
+    "4)" "End interactive mode and display help on batch usage" 3>&2 2>&1 1>&3	
+  )
+  exitstatus=$?
+
+  # handle menu choice
+  case $main_menu_choice in
+    "1)")   
+      # -------------------------------------------------
+      # sub dialogs for defining config file path
+      # -------------------------------------------------
+      config=$(whiptail --title "Base config" --inputbox "Contig path to use:" 0 78 "$default_config"  3>&1 1>&2 2>&3)
+      exitstatus=$?
+      if [ $exitstatus = 0 ]; then
+        if [ ! -f "$config" ]; then
+          err_msg_no_config="File $config not does not exist!\n\n"
+          err_msg_no_config+="CREATE A CONFIG file first, before running this script again.\n\n"
+          err_msg_no_config+="Exiting..."
+          whiptail --title "Error: no config file" --msgbox "$err_msg_no_config" 0 0
+          exit
         fi
-      done
-    else
-      echo "Selected 'quit' exiting without action..."
-      exit 0
-    fi
-    if [[ "$valid" == "1" ]]; then
+      else
+        continue
+      fi
+
+      # -------------------------------------------------
+      # sub dialog for defining Container ID to use
+      # -------------------------------------------------
+      msg_ct_id="Container Id to use? (next available id: $ct_id)"
+      ct_id=$(whiptail --title "Proxmox Container ID" --inputbox "$msg_ct_id" 0 0 "$ct_id"  3>&1 1>&2 2>&3)
+      exitstatus=$?
+      # back to main menu on dialog cancel
+      if [ $exitstatus = 1 ]; then
+        continue
+      fi
+
+      # -------------------------------------------------
+      # Menu dialog to choose service to install
+      # -------------------------------------------------
+      menu_choices=();
+      for key in "${!available_svcs[@]}";
+      do
+          menu_choices+=("${available_svcs[$key]}" "    ($key)");
+      done;
+      checklist_choices=();
+      for key in "${!available_svcs[@]}";
+      do
+          checklist_choices+=("${available_svcs[$key]}" "$key" ""); # last entry in array is default on or off
+      done;
+      msg_svc_choice="Select service container to install"
+      service=$(whiptail --title "Service choice" --menu "$msg_svc_choice" 0 0 0 -- "${menu_choices[@]}" 3>&1 1>&2 2>&3)
+      exitstatus=$?
+      # back to main menu on dialog cancel
+      if [ $exitstatus = 1 ]; then
+        continue
+      fi
+      #service=$(whiptail --title "Service choice (select with space)" --checklist \
+      #"Select service container to install" 0 0 0 -- "${choices2[@]}" 3>&1 1>&2 2>&3)
+    ;;
+
+    "2)") 
+      whiptail --title "Configuration for service installation" \
+               --msgbox "Config:  $config \nCT ID:   $ct_id \nService: $service" 0 0
+    ;;
+
+    "3)") 
+      if [ "$service" == "$undefined" ] || [ ! -f "$config" ]; then
+        whiptail --title "ERROR: no service to install" --msgbox "Configure service container to install first!" 0 0
+        continue # back to main menu
+      else
+        whiptail --title "Install service" --yesno "Installing now service container: $service" \
+                 --yes-button "Continue" --no-button "Cancel" 0 0
+        exitstatus=$?
+        # back to main menu on dialog cancel
+        if [ $exitstatus = 0 ]; then
+          break # end main menu loop and continue this script
+        else
+          continue # back to main menu
+        fi
+      fi
+    ;;
+
+    "4)")   
+      usage
       break
-    fi
+    ;;
+
+  esac
+
+  # exit main menu loop on Cancel
+  if [[ $exitstatus = 1 ]]; then
+    break; 
+  #else 
+  #  whiptail --msgbox "Nothing selected, return to main menu."
+  fi
   done
+  
+  #select svc in $available_svcs quit; do
+    # if [[ "$svc" != "quit" ]]; then
+    #    for line in $(echo $available_svcs); do
+    #     if [[ "$svc" == "$line" ]]; then
+    #       service=$svc
+    #       echo "Installation of $service selected."
+    #       valid=1
+    #       break
+    #     fi
+    #   done
+   # else
+   #   echo "Selected 'quit' exiting without action..."
+   #   exit 0
+   # fi
+   # if [[ "$valid" == "1" ]]; then
+   #   break
+   # fi
+  #done
 else
-  for line in $(echo $OPTS); do
+  for line in "${available_svcs[@]}" 
+  do
     if [[ "$service" == "$line" ]]; then
       echo "Installation of $service selected."
       valid=1
@@ -88,7 +204,8 @@ fi
 
 # Load configuration file
 echo "Loading config file '$config'..."
-source $config
+# shellcheck source-path=./conf
+source "$config"
 
 source $PWD/src/$service/constants-service.conf
 
@@ -104,62 +221,50 @@ else
   pveam download $LXC_TEMPLATE_STORAGE "$LXC_TEMPLATE_VERSION"_$DEB_REP\_amd64.tar.gz
 fi
 
-if [ $ctid -gt 99 ]; then
-  LXC_CHK=$ctid
-else
-  # Get next free LXC-number
-  LXC_LST=$( lxc-ls -1 | tail -1 )
-  LXC_CHK=$((LXC_LST+1));
-fi
 
-if  [ $LXC_CHK -lt 100 ] || [ -f /etc/pve/qemu-server/$LXC_CHK.conf ]; then
-  LXC_NBR=$(pvesh get /cluster/nextid);
-else
-  LXC_NBR=$LXC_CHK;
-fi
-echo "Will now create LXC Container $LXC_NBR!";
+echo "Will now create LXC Container $ct_id!";
 
 # Create the container
-pct create $LXC_NBR -unprivileged $LXC_UNPRIVILEGED $LXC_TEMPLATE_STORAGE:vztmpl/"$LXC_TEMPLATE_VERSION"_$DEB_REP\_amd64.tar.gz -rootfs $LXC_ROOTFS_STORAGE:$LXC_ROOTFS_SIZE;
+pct create $ct_id -unprivileged $LXC_UNPRIVILEGED $LXC_TEMPLATE_STORAGE:vztmpl/"$LXC_TEMPLATE_VERSION"_$DEB_REP\_amd64.tar.gz -rootfs $LXC_ROOTFS_STORAGE:$LXC_ROOTFS_SIZE;
 sleep 2;
 
 # Check vlan configuration
 if [[ $LXC_VLAN != "" ]];then VLAN=",tag=$LXC_VLAN"; else VLAN=""; fi
 # Reconfigure conatiner
-pct set $LXC_NBR -memory $LXC_MEM -swap $LXC_SWAP -hostname $LXC_HOSTNAME -onboot 1 -timezone $LXC_TIMEZONE -features nesting=$LXC_NESTING;
+pct set $ct_id -memory $LXC_MEM -swap $LXC_SWAP -hostname $LXC_HOSTNAME -onboot 1 -timezone $LXC_TIMEZONE -features nesting=$LXC_NESTING;
 if [ $LXC_DHCP == true ]; then
- pct set $LXC_NBR -net0 name=eth0,bridge=$LXC_BRIDGE,ip=dhcp,type=veth$VLAN;
+ pct set $ct_id -net0 name=eth0,bridge=$LXC_BRIDGE,ip=dhcp,type=veth$VLAN;
 else
- pct set $LXC_NBR -net0 name=eth0,bridge=$LXC_BRIDGE,firewall=1,gw=$LXC_GW,ip=$LXC_IP,type=veth$VLAN -nameserver $LXC_DNS -searchdomain $LXC_DOMAIN;
+ pct set $ct_id -net0 name=eth0,bridge=$LXC_BRIDGE,firewall=1,gw=$LXC_GW,ip=$LXC_IP,type=veth$VLAN -nameserver $LXC_DNS -searchdomain $LXC_DOMAIN;
 fi
 sleep 2
 
 if [ $LXC_MP -gt 0 ]; then
-  pct set $LXC_NBR -mp0 $LXC_SHAREFS_STORAGE:$LXC_SHAREFS_SIZE,mp=/$LXC_SHAREFS_MOUNTPOINT
+  pct set $ct_id -mp0 $LXC_SHAREFS_STORAGE:$LXC_SHAREFS_SIZE,mp=/$LXC_SHAREFS_MOUNTPOINT
 fi
 sleep 2;
 
 PS3="Select the Server-Function: "
 
-pct start $LXC_NBR;
+pct start $ct_id;
 sleep 5;
 # Set the root password and key
-echo -e "$LXC_PWD\n$LXC_PWD" | lxc-attach -n$LXC_NBR passwd;
-lxc-attach -n$LXC_NBR mkdir /root/.ssh;
-pct push $LXC_NBR $LXC_AUTHORIZED_KEY /root/.ssh/authorized_keys
-pct push $LXC_NBR $config /root/zamba.conf
-pct push $LXC_NBR $PWD/src/constants.conf /root/constants.conf
-pct push $LXC_NBR $PWD/src/lxc-base.sh /root/lxc-base.sh
-pct push $LXC_NBR $PWD/src/$service/install-service.sh /root/install-service.sh
-pct push $LXC_NBR $PWD/src/$service/constants-service.conf /root/constants-service.conf
+echo -e "$LXC_PWD\n$LXC_PWD" | lxc-attach -n$ct_id passwd;
+lxc-attach -n$ct_id mkdir /root/.ssh;
+pct push $ct_id $LXC_AUTHORIZED_KEY /root/.ssh/authorized_keys
+pct push $ct_id $config /root/zamba.conf
+pct push $ct_id $PWD/src/constants.conf /root/constants.conf
+pct push $ct_id $PWD/src/lxc-base.sh /root/lxc-base.sh
+pct push $ct_id $PWD/src/$service/install-service.sh /root/install-service.sh
+pct push $ct_id $PWD/src/$service/constants-service.conf /root/constants-service.conf
 
 echo "Installing basic container setup..."
-lxc-attach -n$LXC_NBR bash /root/lxc-base.sh
+lxc-attach -n$ct_id bash /root/lxc-base.sh
 echo "Install '$service'!"
-lxc-attach -n$LXC_NBR bash /root/install-service.sh
+lxc-attach -n$ct_id bash /root/install-service.sh
 
 if [[ $service == "zmb-ad" ]]; then
-  pct stop $LXC_NBR
-  pct set $LXC_NBR \-nameserver $(echo $LXC_IP | cut -d'/' -f 1)
-  pct start $LXC_NBR
+  pct stop $ct_id
+  pct set $ct_id \-nameserver $(echo $LXC_IP | cut -d'/' -f 1)
+  pct start $ct_id
 fi
