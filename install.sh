@@ -82,17 +82,25 @@ if [[ "$service" == "$undefined" ]]; then
       # -------------------------------------------------
       # sub dialogs for defining config file path
       # -------------------------------------------------
-      config=$(whiptail --title "Base config" --inputbox "Contig path to use:" 0 78 "$default_config"  3>&1 1>&2 2>&3)
-      exitstatus=$?
-      if [ $exitstatus = 0 ]; then
-        if [ ! -f "$config" ]; then
-          err_msg_no_config="File $config not does not exist!\n\n"
-          err_msg_no_config+="CREATE A CONFIG file first, before running this script again.\n\n"
-          err_msg_no_config+="Exiting..."
-          whiptail --title "Error: no config file" --msgbox "$err_msg_no_config" 0 0
-          exit
+      while true
+      do
+        cfg_qmsg="Define a config path to use (default path given):"
+        config_queried=$(whiptail --title "Base config" --inputbox "$cfg_qmsg" 0 78 "$default_config"  3>&1 1>&2 2>&3)
+        exitstatus=$?
+        if [ $exitstatus = 1 ]; then # ON CANCEL 
+          break
+        else # ON OK
+          if [ ! -f "$config_queried" ]; then
+            err_msg_no_config="File $config_queried not does not exist!\n\n"
+            err_msg_no_config+="CREATE A CONFIG file first, before running container installation.\n\n"
+            whiptail --title "Error: no config file" --msgbox "$err_msg_no_config" 0 0
+          else  # after checks -> normal proceed, use queried path
+            config=$config_queried
+            break
+          fi
         fi
-      else
+      done
+      if [ $exitstatus = 1 ]; then # back to main menu
         continue
       fi
 
@@ -102,18 +110,26 @@ if [[ "$service" == "$undefined" ]]; then
       msg_ct_id="Container Id to use? (next available id: $ct_id)"
       while true 
       do
-        ct_id=$(whiptail --title "Proxmox Container ID" --inputbox "$msg_ct_id" 0 0 "$ct_id"  3>&1 1>&2 2>&3)
+        ct_id_queried=$(whiptail --title "Proxmox Container ID" --inputbox "$msg_ct_id" 0 0 "$ct_id"  3>&1 1>&2 2>&3)
         exitstatus=$?
-        # back to main menu on dialog cancel
-        if [ -f "/etc/pve/qemu-server/$ct_id.conf" ]; then
-          ct_ids_in_use=$(pvesh get /cluster/resources -type vm --output-format yaml \
-                          | grep -E -i 'vmid|name' | sed 's@.*:@@' | paste - - -d "")
-          whiptail --title "Error" --msgbox "ID is already use: \n\n$ct_ids_in_use" 0 0
-        else
+        if [ $exitstatus = 1 ]; then # ON CANCEL 
           break
+        else # ON OK
+          if [ -f "/etc/pve/qemu-server/$ct_id_queried.conf" ]; then # check if ID already used
+            ct_ids_in_use=$(pvesh get /cluster/resources -type vm --output-format yaml \
+                          | grep -E -i 'vmid|name' | sed 's@.*:@@' | paste - - -d "")
+            whiptail --title "Error" --msgbox "ID $ct_id_queried is already use - current VMs: \n\n$ct_ids_in_use" 0 0
+          else
+            if [[ -z "${ct_id_queried}" ]]; then # on empty ID continue loop
+              continue
+            else # after all checks, use queried ID to proceed
+              ct_id=$ct_id_queried
+              break
+            fi
+          fi
         fi
-      done
-      if [ $exitstatus = 1 ]; then
+      done 
+      if [ $exitstatus = 1 ]; then # back to main menu
         continue
       fi
     
@@ -131,11 +147,12 @@ if [[ "$service" == "$undefined" ]]; then
           checklist_choices+=("${available_svcs[$key]}" "$key" ""); # last entry in array is default on or off
       done;
       msg_svc_choice="Select service container to install"
-      service=$(whiptail --title "Service choice" --menu "$msg_svc_choice" 0 0 0 -- "${menu_choices[@]}" 3>&1 1>&2 2>&3)
+      service_queried=$(whiptail --title "Service choice" --menu "$msg_svc_choice" 0 0 0 -- "${menu_choices[@]}" 3>&1 1>&2 2>&3)
       exitstatus=$?
-      # back to main menu on dialog cancel
-      if [ $exitstatus = 1 ]; then
+      if [ $exitstatus = 1 ]; then # back to main menu on dialog cancel
         continue
+      else # normal proceeding
+        service=$service_queried
       fi
       #service=$(whiptail --title "Service choice (select with space)" --checklist \
       #"Select service container to install" 0 0 0 -- "${choices2[@]}" 3>&1 1>&2 2>&3)
@@ -186,6 +203,7 @@ if [[ "$service" == "$undefined" ]]; then
       break
     fi
   done
+fi
 
 if [[ "$valid" != "1" ]]; then
   echo "Invalid option, exiting..."
