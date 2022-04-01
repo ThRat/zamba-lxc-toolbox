@@ -33,7 +33,7 @@ usage() {
   -----------------------------------------------------------------------------------------
 
 	EOF
-	exit $1
+	exit "$1"
 }
 
 ct_id=0
@@ -190,8 +190,6 @@ if [[ "$service" == "$undefined" ]]; then
   # exit main menu loop on Cancel
   if [[ $exitstatus = 1 ]]; then
     break; 
-  #else 
-  #  whiptail --msgbox "Nothing selected, return to main menu."
   fi
   done
   
@@ -212,28 +210,29 @@ fi
 
 # Load configuration file
 echo "Loading config file '$config'..."
-# shellcheck source-path=./conf
+# shellcheck source=/dev/null
 source "$config"
-
-source $PWD/src/$service/constants-service.conf
+# shellcheck source=/dev/null
+source "$PWD/src/$service/constants-service.conf"
 
 # CHeck is the newest template available, else download it.
-DEB_LOC=$(pveam list $LXC_TEMPLATE_STORAGE | grep $LXC_TEMPLATE_VERSION | cut -d'_' -f2)
-DEB_REP=$(pveam available --section system | grep $LXC_TEMPLATE_VERSION | cut -d'_' -f2)
+deb_loc=$(pveam list "$LXC_TEMPLATE_STORAGE" | grep "$LXC_TEMPLATE_VERSION" | cut -d'_' -f2)
+deb_rep=$(pveam available --section system | grep "$LXC_TEMPLATE_VERSION" | cut -d'_' -f2)
 
-if [[ $DEB_LOC == $DEB_REP ]];
+if [[ $deb_loc == "$deb_rep" ]];
 then
-  echo "Newest Version of $LXC_TEMPLATE_VERSION $DEP_REP exists.";
+  echo "Newest Version of $LXC_TEMPLATE_VERSION $deb_rep exists.";
 else
-  echo "Will now download newest $LXC_TEMPLATE_VERSION $DEP_REP.";
-  pveam download $LXC_TEMPLATE_STORAGE "$LXC_TEMPLATE_VERSION"_$DEB_REP\_amd64.tar.gz
+  echo "Will now download newest $LXC_TEMPLATE_VERSION $deb_rep.";
+  pveam download $LXC_TEMPLATE_STORAGE "${LXC_TEMPLATE_VERSION}_${deb_rep}_amd64.tar.zst"
 fi
-
 
 echo "Will now create LXC Container $ct_id!";
 
 # Create the container
-pct create $ct_id -unprivileged $LXC_UNPRIVILEGED $LXC_TEMPLATE_STORAGE:vztmpl/"$LXC_TEMPLATE_VERSION"_$DEB_REP\_amd64.tar.gz -rootfs $LXC_ROOTFS_STORAGE:$LXC_ROOTFS_SIZE;
+pct create "$ct_id" -unprivileged "$LXC_UNPRIVILEGED" \
+           "$LXC_TEMPLATE_STORAGE:vztmpl/${LXC_TEMPLATE_VERSION}_${deb_rep}_amd64.tar.gz" \
+           -rootfs "$LXC_ROOTFS_STORAGE:$LXC_ROOTFS_SIZE";
 sleep 2;
 
 # Check vlan configuration
