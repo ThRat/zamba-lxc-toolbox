@@ -147,15 +147,15 @@ if [[ "$service" == "$undefined" ]]; then
           checklist_choices+=("${available_svcs[$key]}" "$key" ""); # last entry in array is default on or off
       done;
       msg_svc_choice="Select service container to install"
-      service_queried=$(whiptail --title "Service choice" --menu "$msg_svc_choice" 0 0 0 -- "${menu_choices[@]}" 3>&1 1>&2 2>&3)
+      svc_queried=$(whiptail --title "Service choice" --menu "$msg_svc_choice" 0 0 0 -- "${menu_choices[@]}" 3>&1 1>&2 2>&3)
+      #services_queried=$(whiptail --title "Service choice (selectwith space)" --checklist \
+      #"Select service container to install" 0 0 0 -- "${choices2[@]}" 3>&1 1>&2 2>&3)
       exitstatus=$?
       if [ $exitstatus = 1 ]; then # back to main menu on dialog cancel
         continue
       else # normal proceeding
-        service=$service_queried
+        service=$svc_queried
       fi
-      #service=$(whiptail --title "Service choice (select with space)" --checklist \
-      #"Select service container to install" 0 0 0 -- "${choices2[@]}" 3>&1 1>&2 2>&3)
     ;;
 
     "2)") 
@@ -216,22 +216,23 @@ source "$config"
 source "$PWD/src/$service/constants-service.conf"
 
 # CHeck is the newest template available, else download it.
-deb_loc=$(pveam list "$LXC_TEMPLATE_STORAGE" | grep "$LXC_TEMPLATE_VERSION" | cut -d'_' -f2)
-deb_rep=$(pveam available --section system | grep "$LXC_TEMPLATE_VERSION" | cut -d'_' -f2)
+DEB_LOC=$(pveam list $LXC_TEMPLATE_STORAGE | grep $LXC_TEMPLATE_VERSION | tail -1 | cut -d'_' -f2)
+DEB_REP=$(pveam available --section system | grep $LXC_TEMPLATE_VERSION | tail -1 | cut -d'_' -f2)
+TMPL_NAME=$(pveam available --section system | grep $LXC_TEMPLATE_VERSION | tail -1 | cut -d' ' -f11)
 
-if [[ $deb_loc == "$deb_rep" ]];
+if [[ $DEB_LOC == $DEB_REP ]];
 then
-  echo "Newest Version of $LXC_TEMPLATE_VERSION $deb_rep exists.";
+  echo "Newest Version of $LXC_TEMPLATE_VERSION $DEP_REP exists.";
 else
-  echo "Will now download newest $LXC_TEMPLATE_VERSION $deb_rep.";
-  pveam download $LXC_TEMPLATE_STORAGE "${LXC_TEMPLATE_VERSION}_${deb_rep}_amd64.tar.zst"
+  echo "Will now download newest $LXC_TEMPLATE_VERSION $DEP_REP.";
+  pveam download $LXC_TEMPLATE_STORAGE $TMPL_NAME
 fi
 
 echo "Will now create LXC Container $ct_id!";
 
 # Create the container
 pct create "$ct_id" -unprivileged "$LXC_UNPRIVILEGED" \
-           "$LXC_TEMPLATE_STORAGE:vztmpl/${LXC_TEMPLATE_VERSION}_${deb_rep}_amd64.tar.gz" \
+           "$LXC_TEMPLATE_STORAGE:vztmpl/${TMPL_NAME}" \
            -rootfs "$LXC_ROOTFS_STORAGE:$LXC_ROOTFS_SIZE";
 sleep 2;
 
